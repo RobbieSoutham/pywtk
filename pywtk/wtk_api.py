@@ -24,6 +24,7 @@ MET_ATTRS = ['density', 'power', 'pressure', 'temperature', 'wind_direction',
                'wind_speed']
 S3_BUCKET = "nrel-pds-wtk"
 S3_KEYDIR = "wtk-techno-economic/pywtk-data"
+
 if 'PYWTK_CACHE_DIR' in os.environ:
     # Set FCST and MET dirs appropriately
     WIND_MET_NC_DIR = os.path.join(os.environ['PYWTK_CACHE_DIR'], "met_data")
@@ -80,11 +81,12 @@ def get_wind_data_by_wkt(wkt, names, attributes=None, interval=5, leap_day=True,
         data_dir = WIND_FCST_DIR
     else:
         raise Exception("Invalid data to retrieve: %s"%type)
+    
     ret_dict = {}
     for site_id in get_3tiersites_from_wkt(wkt).index.values:
         site_tz = timezones.iloc[site_id]['zoneName']
         _logger.info("Site %s is in %s", site_id, site_tz)
-        ret_df = pandas.DataFrame()
+        ret_dfs = []
         for year in names:
             if utc == False:
                 # Min datetime in UTC
@@ -95,8 +97,8 @@ def get_wind_data_by_wkt(wkt, names, attributes=None, interval=5, leap_day=True,
                 min_dt = pandas.Timestamp('%s-01-01'%year, tz='utc')
                 max_dt = pandas.Timestamp('%s-12-31 23:59:59'%year, tz='utc')
             #ret_df = ret_df.append(data_function(site_id, min_dt, max_dt, attributes, leap_day, utc))
-            ret_df = ret_df.append(get_nc_data(site_id, min_dt, max_dt, attributes, leap_day, utc, data_dir))
-        ret_dict[site_id] = ret_df
+            ret_dfs.append(get_nc_data(site_id, min_dt, max_dt, attributes, leap_day, utc, data_dir))
+        ret_dict[site_id] = pandas.concat(ret_dfs)
         # Break on POINT as it will return all sites in order of distance to the
         # wkt point
         if 'POINT' in wkt:
@@ -411,15 +413,18 @@ def site_from_cache(site_id, nc_dir):
     _logger.info("site_from_cache: nc_dir is %s", nc_dir)
     s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
     site_file = os.path.join(nc_dir, str(int(site_id/500)), "%s.nc" % site_id)
+    
     site_file_unix = site_file.replace("\\", "/")
     # Check for file in nc_dir
     if not os.path.exists(site_file):
         _logger.warning("Downloading missing file %s"%site_file)
+        
         key = S3_KEYDIR + '/' + site_file_unix[len(os.environ['PYWTK_CACHE_DIR']):].lstrip("/\\")
         site_path = os.path.dirname(site_file)
+
         if not os.path.exists(site_path):
             _logger.info("Creating missing directory %s"%site_path)
             os.makedirs(site_path)
         # Download if missing to nc_dir
         s3.download_file(Bucket=S3_BUCKET, Key=key, Filename=site_file)
-    return site_file
+    return site_file_unix
